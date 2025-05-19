@@ -29,6 +29,20 @@ typedef enum {
 - (void) import;
 @end
 
+
+- (NSString *)getJIDStringFromRowID:(NSNumber *)rowID {
+    if (!rowID || [rowID isEqual:[NSNull null]]) return nil;
+    NSString *query = [NSString stringWithFormat:@"SELECT raw_string FROM jid WHERE _id = %@ LIMIT 1;", rowID];
+    NSMutableArray *result = [self executeQuery:query]; // executeQuery needs to handle single value return
+    if (result.count > 0 && [result.firstObject objectForKey:@"raw_string"]) {
+        return [result.firstObject objectForKey:@"raw_string"];
+    }
+    NSLog(@"Warning: Could not find JID string for row_id: %@", rowID);
+    NSLog(@"Warning getJIDStringFromRowID: Result: %@", result);
+    return nil; // Or handle error appropriately
+}
+
+
 int main(int argc, const char * argv[]) {
     if (argc != 4) {
         NSLog(@"usage: %s <android sqlite> <iphone sqlite> <momd>", argv[0]);
@@ -273,8 +287,8 @@ int main(int argc, const char * argv[]) {
 }
 
 - (void) importChats {
-    NSArray * androidChats = [self executeQuery:@"SELECT * FROM chat_view WHERE hidden = 0"];
-    NSNull *null = [NSNull null];  // Stupid singleton
+    NSArray *androidChats = [self executeQuery:@"SELECT _id, jid_row_id, archived, subject, creation FROM chat"]; // Added _id for potential FK use
+    NSNull *null = [NSNull null];
     NSString *ourJID = nil;
 
     // Load chats from iOS backup - they contain some data,
@@ -284,34 +298,42 @@ int main(int argc, const char * argv[]) {
     ourJID = [self guessOurJID];
 
     for (NSDictionary *achat in androidChats) {
-        NSString *chatJID = [achat objectForKey:@"raw_string_jid"];
+        NSString *chatJID = [achat objectForKey:@"jid_row_id"]; // Modern: 'jid'
+        if (!chatJID || [chatJID isEqual:null]) {
+            NSLog(@"Skipping chat with NULL JID: %@", achat);
+            continue;
+        }
+        chatJID = getJIDStringFromRowID(chatJID);
+        if (!chatJID) {
+            NSLog(@"Skipping chat with NULL JID string: %@", achat);
+            continue;
+        }
         NSManagedObject *chat = [self.chats objectForKey:chatJID];
         NSMutableDictionary *members = nil;
         BOOL isGroup = FALSE;
-
+        isGroup = ([chatJID containsString:@"@g.us"] || [achat objectForKey:@"subject"] != null);
         if (chat == nil) {
-            NSLog(@"%@: not found", chatJID);
+            NSLog(@"%@: not found, creating new iOS chat session", chatJID);
             chat = [NSEntityDescription insertNewObjectForEntityForName:@"WAChatSession"
                                                  inManagedObjectContext:self.moc];
-
             [chat setValue:chatJID forKey:@"contactJID"];
 
-            NSNumber *archived = [NSNumber numberWithBool:([achat objectForKey:@"archived"] != null)];
-            [chat setValue:archived forKey:@"archived"];
+            // Modern: 'archived' is likely an integer 0/1
+            NSNumber *archivedNum = [achat objectForKey:@"archived"];
+            BOOL isArchived = (archivedNum && ![archivedNum isEqual:null] && [archivedNum intValue] == 1);
+            [chat setValue:[NSNumber numberWithBool:isArchived] forKey:@"archived"];
 
-            // Will be updated later
-            [chat setValue:@0 forKey:@"messageCounter"];
+            [chat setValue:@0 forKey:@"messageCounter"]; // Will be updated later
 
-            // This field should contain contact name for non-groups
             NSString *partnerName = [achat objectForKey:@"subject"];
-            isGroup = ((id) partnerName != null);
             if (!isGroup) {
-                // FIXME Take it from wa.db of from other chats
-                partnerName = [chatJID componentsSeparatedByString:@"@"][0];
+                // For non-groups, partnerName might be derived or fetched differently
+                // The old code derived from JID if subject was null.
+                if (partnerName == null || [partnerName isEqual:null]) {
+                     partnerName = [chatJID componentsSeparatedByString:@"@"][0];
+                }
             }
             [chat setValue:partnerName forKey:@"partnerName"];
-
-            // We'll use this dict to link messages with chats
             [self.chats setObject:chat forKey:chatJID];
 
             if (!isGroup) {
@@ -322,24 +344,37 @@ int main(int argc, const char * argv[]) {
             NSManagedObject *group = [NSEntityDescription insertNewObjectForEntityForName:@"WAGroupInfo"
                                                                    inManagedObjectContext:self.moc];
 
-            NSDate *creation = [self convertAndroidTimestamp:[achat objectForKey:@"created_timestamp"]];
-            [group setValue:creation forKey:@"creationDate"];
-
-            [group setValue:chat forKey:@"chatSession"];
+            NSNumber *creationTimestamp = [achat objectForKey:@"creation"];
+            if (creationTimestamp && ![creationTimestamp isEqual:null]) {
+                NSDate *creationDate = [self convertAndroidTimestamp:creationTimestamp]; // convertAndroidTimestamp might need to handle seconds too
+                [group setValue:creationDate forKey:@"creationDate"];
+            }
+            [group setValue:chat forKey:@"chatSession"]
 
             // Messages in groups are linked to members
             members = [NSMutableDictionary new];
             [self.chatMembers setObject:members forKey:chatJID];
         } else {
-            NSLog(@"%@: found", chatJID);
-            isGroup = ([chat valueForKey:@"groupInfo"] != nil);
+            NSLog(@"%@: found existing iOS chat session", chatJID);
+            // Update existing chat if necessary (e.g., archived status, subject)
+            NSNumber *archivedNum = [achat objectForKey:@"archived"];
+            BOOL isArchived = (archivedNum && ![archivedNum isEqual:null] && [archivedNum intValue] == 1);
+            [chat setValue:[NSNumber numberWithBool:isArchived] forKey:@"archived"];
+            
+            NSString *partnerName = [achat objectForKey:@"subject"];
+            if (partnerName && ![partnerName isEqual:null]) {
+                 [chat setValue:partnerName forKey:@"partnerName"];
+            }
+
+
+            isGroup = ([chat valueForKey:@"groupInfo"] != nil); // Check existing iOS groupInfo
             members = [self.chatMembers objectForKey:chatJID];
         }
 
         if (!isGroup) {
             continue;
         }
-        NSLog(@"\t is group chat");
+        NSLog(@"\t %@ is a group chat", chatJID);
 
         // Insert group members
         NSString *query = @"SELECT * from group_participants WHERE gjid == '%@'";
@@ -348,7 +383,7 @@ int main(int argc, const char * argv[]) {
             NSString *memberJID = [amember objectForKey:@"jid"];
             NSManagedObject *member = nil;
 
-            if ([memberJID isEqualToString:@""]) {
+            if ([memberJID isEqualToString:@""]|| !memberJID || [memberJID isEqual:null]) {
                 // This entry corresponds to our account, should add it as well.
                 memberJID = ourJID;
             }
