@@ -301,11 +301,11 @@ int main(int argc, const char * argv[]) {
 
     for (NSDictionary *achat in androidChats) {
         NSNumber *chatJID_1 = [achat objectForKey:@"jid_row_id"]; // Modern: 'jid'
-        if (!chatJID || [chatJID isEqual:null]) {
+        if (!chatJID_1 || [chatJID_1 isEqual:null]) {
             NSLog(@"Skipping chat with NULL JID: %@", achat);
             continue;
         }
-        NSString * chatJID = [self getJIDStringFromRowID(chatJID)];
+        NSString * chatJID = [self getJIDStringFromRowID(chatJID_1)];
         if (!chatJID) {
             NSLog(@"Skipping chat with NULL JID string: %@", achat);
             continue;
