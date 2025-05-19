@@ -289,7 +289,7 @@ int main(int argc, const char * argv[]) {
 }
 
 - (void) importChats {
-    NSArray *androidChats = [self executeQuery:@"SELECT _id, jid_row_id, archived, subject, creation FROM chat"]; // Added _id for potential FK use
+    NSArray *androidChats = [self executeQuery:@"SELECT _id, jid_row_id, archived, subject, created_timestamp FROM chat"]; // Added _id for potential FK use
     NSNull *null = [NSNull null];
     NSString *ourJID = nil;
 
@@ -305,7 +305,7 @@ int main(int argc, const char * argv[]) {
             NSLog(@"Skipping chat with NULL JID: %@", achat);
             continue;
         }
-        NSString * chatJID = [self getJIDStringFromRowID(chatJID_1)];
+        NSString * chatJID = [self getJIDStringFromRowID:chatJID_1];
         if (!chatJID) {
             NSLog(@"Skipping chat with NULL JID string: %@", achat);
             continue;
@@ -346,7 +346,7 @@ int main(int argc, const char * argv[]) {
             NSManagedObject *group = [NSEntityDescription insertNewObjectForEntityForName:@"WAGroupInfo"
                                                                    inManagedObjectContext:self.moc];
 
-            NSNumber *creationTimestamp = [achat objectForKey:@"creation"];
+            NSNumber *creationTimestamp = [achat objectForKey:@"created_timestamp"];
             if (creationTimestamp && ![creationTimestamp isEqual:null]) {
                 NSDate *creationDate = [self convertAndroidTimestamp:creationTimestamp]; // convertAndroidTimestamp might need to handle seconds too
                 [group setValue:creationDate forKey:@"creationDate"];
