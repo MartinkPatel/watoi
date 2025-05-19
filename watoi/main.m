@@ -516,7 +516,7 @@ int main(int argc, const char * argv[]) {
             NSLog(@"Could not find row_id for chatJID: %@. Skipping messages.", chatJID);
             continue;
         }
-        NSString *chatIdQuery = [NSString stringWithFormat:@"SELECT _id FROM chat WHERE jid_row_id = '%@' LIMIT 1;", jid_row_id];
+        NSString *chatIdQuery = [NSString stringWithFormat:@"SELECT _id FROM chat WHERE jid_row_id = '%@' LIMIT 1;", jidRowID];
         NSMutableArray *chatIdResult = [self executeQuery:chatIdQuery];
         if (chatIdResult.count > 0 && [chatIdResult.firstObject objectForKey:@"_id"]) {
             androidChatRowID = [chatIdResult.firstObject objectForKey:@"_id"];
