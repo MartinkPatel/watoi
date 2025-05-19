@@ -300,12 +300,12 @@ int main(int argc, const char * argv[]) {
     ourJID = [self guessOurJID];
 
     for (NSDictionary *achat in androidChats) {
-        NSString *chatJID = [achat objectForKey:@"jid_row_id"]; // Modern: 'jid'
+        NSNumber *chatJID = [achat objectForKey:@"jid_row_id"]; // Modern: 'jid'
         if (!chatJID || [chatJID isEqual:null]) {
             NSLog(@"Skipping chat with NULL JID: %@", achat);
             continue;
         }
-        chatJID = getJIDStringFromRowID(chatJID);
+        chatJID = [self getJIDStringFromRowID(chatJID)];
         if (!chatJID) {
             NSLog(@"Skipping chat with NULL JID string: %@", achat);
             continue;
