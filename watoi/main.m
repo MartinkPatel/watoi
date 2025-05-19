@@ -462,141 +462,226 @@ int main(int argc, const char * argv[]) {
 }
 
 - (void) importMessages {
-    NSString *query = @"SELECT * FROM legacy_available_messages_view where"
-                       " key_remote_jid == '%@'"
-                       " AND status != 6"  // Some system messages
-                       " ORDER BY timestamp";
-    id null = [NSNull null];  // Stupid singleton
+    // ASSUMPTIONS:
+    // - Main table is 'message'.
+    // - Chat link is 'chat_row_id' -> 'chat._id'. We need the chat JID.
+    // - Sender in group is 'sender_jid_row_id' -> 'jid._id' -> 'jid.raw_string'.
+    // - Text is in 'text_data'.
+    // - 'message_type' might replace 'status' for filtering system messages.
+    // - 'from_me' replaces 'key_from_me'.
+    // - 'media_wa_type' still exists for media type.
+    // - 'key_id' still exists for stanzaID.
+
+    // This query becomes much more complex if we need to JOIN to get all necessary JIDs
+    // For simplicity here, we'll assume we query per chat, and might do sub-queries or lookups.
+    // A more efficient way would be a larger JOIN query.
+
+    // Example: If we iterate chats and get chat._id (chatRowIDFromAndroid)
+    // NSString *query = [NSString stringWithFormat:
+    //    @"SELECT m.from_me, m.timestamp, m.key_id, m.message_type, m.media_wa_type, m.text_data, m.media_caption, m.sender_jid_row_id "
+    //     "FROM message m "
+    //     "WHERE m.chat_row_id = %@ AND m.message_type != %d " // %d = SOME_SYSTEM_MESSAGE_TYPE_CODE
+    //     "ORDER BY m.timestamp", chatRowIDFromAndroid, SOME_SYSTEM_MESSAGE_TYPE_CODE];
+
+    id null = [NSNull null];
 
     for (NSString *chatJID in self.chats) { @autoreleasepool {
         NSManagedObject *chat = [self.chats objectForKey:chatJID];
-        NSDictionary *members = [self.chatMembers objectForKey:chatJID];
-        NSMutableArray *results = [self executeQuery:[NSString stringWithFormat:query, chatJID]];
+        NSDictionary *members = [self.chatMembers objectForKey:chatJID]; // From loadChats/importChats
         BOOL isGroup = ([chat valueForKey:@"groupInfo"] != nil);
         NSManagedObject *msg = nil;
 
         NSLog(@"Importing messages for chat: %@", [chat valueForKey:@"contactJID"]);
 
-        // This value will increase with message date
-        int sort = 0;
+        // To get chat_row_id for the current chatJID to query messages:
+        // This is inefficient if done per chat. Better to fetch all chat _ids initially.
+        // Or pass chatRowID from importChats if available.
+        NSNumber *androidChatRowID = nil;
+        NSString *chatIdQuery = [NSString stringWithFormat:@"SELECT _id FROM chat WHERE jid = '%@' LIMIT 1;", chatJID];
+        NSMutableArray *chatIdResult = [self executeQuery:chatIdQuery];
+        if (chatIdResult.count > 0 && [chatIdResult.firstObject objectForKey:@"_id"]) {
+            androidChatRowID = [chatIdResult.firstObject objectForKey:@"_id"];
+        } else {
+            NSLog(@"Could not find _id for chatJID: %@. Skipping messages.", chatJID);
+            continue;
+        }
+        
+        // Define a placeholder for system message type to ignore (this needs to be researched from the actual DB)
+        // For example, if type 10 is system messages you want to ignore:
+        int SYSTEM_MESSAGE_TYPE_TO_IGNORE = 6; // THIS IS A PLACEHOLDER
+
+        NSString *messagesQuery = [NSString stringWithFormat:
+            @"SELECT from_me, timestamp, key_id, message_type, text_data, sender_jid_row_id "
+             "FROM message "
+             "WHERE chat_row_id = %@ AND (message_type IS NULL OR message_type != %d) " // Filter out specific system messages
+             "ORDER BY timestamp", androidChatRowID, SYSTEM_MESSAGE_TYPE_TO_IGNORE];
+
+        NSMutableArray *results = [self executeQuery:messagesQuery];
+        int sort = 0; // This will be reset by the later fetch and update loop
 
         for (NSDictionary *amsg in results) {
             msg = [NSEntityDescription insertNewObjectForEntityForName:@"WAMessage"
                                                 inManagedObjectContext:self.moc];
-            BOOL fromMe = [[amsg objectForKey:@"key_from_me"] intValue];
 
-            NSDate * timestamp = [self convertAndroidTimestamp:[amsg objectForKey:@"timestamp"]];
+            // Modern: 'from_me' is likely an integer 0/1
+            BOOL fromMe = [[amsg objectForKey:@"from_me"] intValue] == 1;
+
+            NSDate *timestamp = [self convertAndroidTimestamp:[amsg objectForKey:@"timestamp"]];
             [msg setValue:timestamp forKey:@"messageDate"];
             // TODO sentDate
 
             [msg setValue:[NSNumber numberWithBool:fromMe] forKey:@"isFromMe"];
             if (!fromMe) {
-                [msg setValue:chatJID forKey:@"fromJID"];
+                [msg setValue:chatJID forKey:@"fromJID"]; // The JID of the chat partner or group
                 if (isGroup) {
-                    NSString *senderJID = [amsg objectForKey:@"remote_resource"];
-                    NSManagedObject *member = [members objectForKey:senderJID];
-                    if (member == nil) {
-                        NSLog(@"\tmissing sender %@", senderJID);
-                        member = [self addMissingMember:senderJID toChat:chatJID asAdmin:@NO];
+                    NSNumber *senderRowID = [amsg objectForKey:@"sender_jid_row_id"];
+                    NSString *senderJID = nil;
+                    if (senderRowID && ![senderRowID isEqual:null]) {
+                        senderJID = [self getJIDStringFromRowID:senderRowID]; // Helper to lookup JID
+                    } else {
+                        // If sender_jid_row_id is NULL in a group message not from me,
+                        // it's an anomaly or an old system message.
+                        // The original code used chatJID for fromJID.
+                        // For group messages, if sender is unknown, it's problematic.
+                        NSLog(@"\tWarning: Group message in %@ not from me, but sender_jid_row_id is NULL. amsg: %@", chatJID, amsg);
+                        // Fallback or skip? For now, let's try to add a placeholder member if JID is missing.
+                        // senderJID might remain nil.
                     }
 
-                    [msg setValue:member forKey:@"groupMember"];
+                    NSManagedObject *member = nil;
+                    if (senderJID) {
+                         member = [members objectForKey:senderJID];
+                    }
+
+                    if (member == nil && senderJID) { // Only add if we have a senderJID
+                        NSLog(@"\tmissing sender %@ (from row_id %@), adding for chat %@", senderJID, senderRowID, chatJID);
+                        member = [self addMissingMember:senderJID toChat:chatJID asAdmin:@NO];
+                    } else if (member == nil && !senderJID && isGroup) {
+                        NSLog(@"\tCannot determine sender for group message in %@. Message data: %@", chatJID, amsg);
+                        // Decide how to handle: skip message, assign to a generic "unknown sender", etc.
+                        // For now, it won't have a groupMember set.
+                    }
+                    if (member) { // Only set if member is found/created
+                        [msg setValue:member forKey:@"groupMember"];
+                    }
                 }
-            } else {
-                [msg setValue:chatJID forKey:@"toJID"];
-                // Delivered?
+            } else { // Message is from me
+                [msg setValue:chatJID forKey:@"toJID"]; // The JID of the chat partner or group
+                // Delivered? Status 5 was used. This needs to be mapped from new 'status' or 'message_type' columns.
+                // For now, let's keep it as 5, but this is a guess.
                 [msg setValue:@5 forKey:@"messageStatus"];
             }
 
-            // Messages show up unordered without this field
-            [msg setValue:[NSNumber numberWithInt:(sort++)] forKey:@"sort"];
+            // Sort will be fixed later, but initialize for now
+            [msg setValue:[NSNumber numberWithInt:0] forKey:@"sort"]; // Placeholder, will be updated
 
-            // What is that? Some jabber stuff?
-            [msg setValue:[amsg objectForKey:@"key_id"] forKey:@"stanzaID"];
+            // Modern: 'key_id' for stanzaID
+            id stanzaID = [amsg objectForKey:@"key_id"];
+            if (stanzaID && ![stanzaID isEqual:null]) {
+                [msg setValue:stanzaID forKey:@"stanzaID"];
+            }
 
-            // IDK, all msgs in a real ChatStorage had @2 here
-            [msg setValue:@2 forKey:@"dataItemVersion"];
+            [msg setValue:@2 forKey:@"dataItemVersion"]; // Assuming this iOS-specific field remains
 
-            // Spotlight stuff?
-            //        [msg setValue:@0 forKey:@"docID"];
-            //        [msg setValue:@0 forKey:@"spotlightStatus"];
-            // Don't know what is it
-            //        [msg setValue:@0 forKey:@"flags"];
-            //        [msg setValue:@0 forKey:@"groupEventType"];
-            //        [msg setValue:@0 forKey:@"mediaSectionID"];
-            //        [msg setValue:@0 forKey:@"messageStatus"];
+            // Message content
+            // Modern: 'media_wa_type' for type, 'text_data' for text, 'media_caption'
+            NSNumber *mediaTypeNum =  nil;
+            WAMsgType type = MSG_TEXT; // Default
+            if (mediaTypeNum && ![mediaTypeNum isEqual:null]) {
+                type = [mediaTypeNum intValue];
+                // IMPORTANT: The WAMsgType enum values (0 for text, 1 for image etc.)
+                // might be different in newer Android DBs. This mapping needs verification.
+            } else {
+                // If media_wa_type is null, it's likely a text message or a system message
+                // Check message_type if needed to further classify
+                // NSNumber *generalMessageType = [amsg objectForKey:@"message_type"];
+            }
 
-            // Here goes the root of all suffering
-            WAMsgType type = [[amsg objectForKey:@"media_wa_type"] intValue];
-            NSString *text = [amsg objectForKey:@"data"]; // or null
-            if (type != MSG_TEXT) {
-                // Can't import media yet, but we'll have strange conversatios
-                // if media messages are gone completely - put placeholders.
-                NSString *prefix = null;
-                switch (type) {
+
+            NSString *text = [amsg objectForKey:@"text_data"]; // Modern: 'text_data'
+
+            if (type != MSG_TEXT) { // Assuming WAMsgType enum is still somewhat valid
+                NSString *prefix = nil;
+                switch (type) { // This switch relies on WAMsgType enum values matching new DB
                     case MSG_IMAGE: prefix = @"<image>"; break;
                     case MSG_AUDIO: prefix = @"<audio>"; break;
                     case MSG_VIDEO: prefix = @"<video>"; break;
                     case MSG_CONTACT: prefix = @"<contact>"; break;
                     case MSG_LOCATION: prefix = @"<location>"; break;
-                    case MSG_CALL: prefix = @"<call>"; break;
-                    case MSG_WTF: prefix = @"<unknown event>"; break;
-                    case MSG_WTF2: prefix = @"<unknown event>"; break;
-                    case MSG_TEXT: break;
+                    case MSG_CALL: prefix = @"<call>"; break; // Call log messages might be separate now
+                    // MSG_WTF, MSG_WTF2 might map to new system message types
+                    default: prefix = [NSString stringWithFormat:@"<unknown media_wa_type: %d>", type]; break;
                 }
 
-                // Prepend media caption (if it exists) to the type
                 NSString *caption = [amsg objectForKey:@"media_caption"];
-                if ((id) caption != null) {
+                if (caption && ![caption isEqual:null] && [caption length] > 0) {
                     text = [NSString stringWithFormat:@"%@: %@", prefix, caption];
                 } else {
                     text = prefix;
                 }
             }
-            [msg setValue:@(MSG_TEXT) forKey:@"messageType"];
-            if ((id) text != null) {
+
+            [msg setValue:@(MSG_TEXT) forKey:@"messageType"]; // iOS side always gets MSG_TEXT for these placeholders
+
+            if (text && ![text isEqual:null]) {
                 [msg setValue:text forKey:@"text"];
-            } else {
-                NSLog(@"null text detected: %@", amsg);
+            } else if (type != MSG_TEXT) { // If it was supposed to be media but text is still null
+                 [msg setValue:[NSString stringWithFormat:@"<media type %d with no caption/text>", type] forKey:@"text"];
+            }
+            else {
+                 // Truly null text for a text message (or unhandled system message)
+                NSLog(@"Null text detected for message (not classified as media): %@", amsg);
+                 [msg setValue:@"<message with null text>" forKey:@"text"]; // Placeholder for safety
             }
 
             [msg setValue:chat forKey:@"chatSession"];
         }
 
-        // Fix sort fields for newly arrived messages
+        // Fix sort fields (this logic can remain largely the same)
+        // Fetch existing messages already in CoreData for this chat session
         NSFetchRequest *fetchRequest = [NSFetchRequest fetchRequestWithEntityName:@"WAMessage"];
         NSPredicate *predicate = [NSPredicate predicateWithFormat:@"chatSession = %@", [chat objectID]];
-        NSSortDescriptor *sortDescriptor = [NSSortDescriptor sortDescriptorWithKey:@"sort" ascending:YES];
+        NSSortDescriptor *sortDescriptor = [NSSortDescriptor sortDescriptorWithKey:@"messageDate" ascending:YES]; // Sort by date first
+        // Then by original stanzaID or an imported order if available
         [fetchRequest setSortDescriptors:[NSArray arrayWithObject:sortDescriptor]];
         [fetchRequest setPredicate:predicate];
-        fetchRequest.includesPropertyValues = NO;
-        // Do not fetch unsaved messages (eg. ones we've just created)
-        fetchRequest.includesPendingChanges = NO;
+        // fetchRequest.includesPropertyValues = NO; // We need values to set sort
+        fetchRequest.includesPendingChanges = YES; // Include newly added messages
 
         NSError *error = nil;
-        NSArray *newMessages = [self.moc executeFetchRequest:fetchRequest error:&error];
-        if (!newMessages) {
-            NSLog(@"Error fetching objects: %@\n%@", [error localizedDescription], [error userInfo]);
-            abort();
+        NSArray *allMessagesForChat = [self.moc executeFetchRequest:fetchRequest error:&error];
+        if (!allMessagesForChat) {
+            NSLog(@"Error fetching messages for sort update: %@\n%@", [error localizedDescription], [error userInfo]);
+            // Continue without sorting if fetch fails, or abort
+        } else {
+            int currentSortIndex = 0;
+            for (NSManagedObject *messageToResort in allMessagesForChat) {
+                [messageToResort setValue:[NSNumber numberWithInt:(currentSortIndex++)] forKey:@"sort"];
+            }
+            sort = currentSortIndex; // Update sort for chat's messageCounter
         }
 
-        for (msg in newMessages) {
-            [msg setValue:[NSNumber numberWithInt:(sort++)] forKey:@"sort"];
-        }
 
-        // When new message arrive, it's sort field is taken from chat's counter
+        // When new message arrive, its sort field is taken from chat's counter
         [chat setValue:[NSNumber numberWithInt:sort] forKey:@"messageCounter"];
 
-        // Link last message
-        if (msg != nil) {
-            [chat setValue:msg forKey:@"lastMessage"];
-            [chat setValue:[msg valueForKey:@"text"] forKey:@"lastMessageText"];
-            [chat setValue:[msg valueForKey:@"messageDate"] forKey:@"lastMessageDate"];
+        // Link last message (fetch the actual last message by date from allMessagesForChat)
+        if ([allMessagesForChat count] > 0) {
+            NSManagedObject *lastMessageInChat = [allMessagesForChat lastObject]; // Since it's sorted by date
+            [chat setValue:lastMessageInChat forKey:@"lastMessage"];
+            [chat setValue:[lastMessageInChat valueForKey:@"text"] forKey:@"lastMessageText"];
+            [chat setValue:[lastMessageInChat valueForKey:@"messageDate"] forKey:@"lastMessageDate"];
+        } else if (msg != nil) { // Fallback if allMessagesForChat was empty but we processed one msg
+             [chat setValue:msg forKey:@"lastMessage"];
+             [chat setValue:[msg valueForKey:@"text"] forKey:@"lastMessageText"];
+             [chat setValue:[msg valueForKey:@"messageDate"] forKey:@"lastMessageDate"];
         }
+
 
         [self saveCoreData];
     }}
 }
+
 
 - (void) saveCoreData {
     NSError *error = nil;

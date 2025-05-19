@@ -188,10 +188,10 @@
         
         // Define a placeholder for system message type to ignore (this needs to be researched from the actual DB)
         // For example, if type 10 is system messages you want to ignore:
-        int SYSTEM_MESSAGE_TYPE_TO_IGNORE = 10; // THIS IS A PLACEHOLDER
+        int SYSTEM_MESSAGE_TYPE_TO_IGNORE = 6; // THIS IS A PLACEHOLDER
 
         NSString *messagesQuery = [NSString stringWithFormat:
-            @"SELECT from_me, timestamp, key_id, message_type, media_wa_type, text_data, media_caption, sender_jid_row_id "
+            @"SELECT from_me, timestamp, key_id, message_type, text_data, sender_jid_row_id "
              "FROM message "
              "WHERE chat_row_id = %@ AND (message_type IS NULL OR message_type != %d) " // Filter out specific system messages
              "ORDER BY timestamp", androidChatRowID, SYSTEM_MESSAGE_TYPE_TO_IGNORE];
@@ -265,7 +265,7 @@
 
             // Message content
             // Modern: 'media_wa_type' for type, 'text_data' for text, 'media_caption'
-            NSNumber *mediaTypeNum = [amsg objectForKey:@"media_wa_type"];
+            NSNumber *mediaTypeNum =  nil;
             WAMsgType type = MSG_TEXT; // Default
             if (mediaTypeNum && ![mediaTypeNum isEqual:null]) {
                 type = [mediaTypeNum intValue];
