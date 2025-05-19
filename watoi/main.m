@@ -351,7 +351,7 @@ int main(int argc, const char * argv[]) {
                 NSDate *creationDate = [self convertAndroidTimestamp:creationTimestamp]; // convertAndroidTimestamp might need to handle seconds too
                 [group setValue:creationDate forKey:@"creationDate"];
             }
-            [group setValue:chat forKey:@"chatSession"]
+            [group setValue:chat forKey:@"chatSession"];
 
             // Messages in groups are linked to members
             members = [NSMutableDictionary new];
