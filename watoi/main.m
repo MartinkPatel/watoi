@@ -527,7 +527,7 @@ int main(int argc, const char * argv[]) {
         
         // Define a placeholder for system message type to ignore (this needs to be researched from the actual DB)
         // For example, if type 10 is system messages you want to ignore:
-        int SYSTEM_MESSAGE_TYPE_TO_IGNORE = 6; // THIS IS A PLACEHOLDER
+        int SYSTEM_MESSAGE_TYPE_TO_IGNORE = 7; // THIS IS A PLACEHOLDER
 
         NSString *messagesQuery = [NSString stringWithFormat:
             @"SELECT from_me, timestamp, key_id, message_type, text_data, sender_jid_row_id "
