@@ -74,6 +74,7 @@ int main(int argc, const char * argv[]) {
 - (NSDate *) convertAndroidTimestamp:(NSNumber *)timestamp;
 - (NSManagedObject *) addMissingMember:(NSString *)memberJID toChat:(NSString *)chatJID asAdmin:(NSNumber *)isAdmin;
 - (NSString *) getJIDStringFromRowID:(NSNumber *)rowID;
+- (NSNumber *)getJIDRowIDFromString:(NSString *)jidString;
 // Debug stuff
 - (void) dumpEntityDescriptions;
 - (void) peekAndroidMessages;
@@ -460,7 +461,20 @@ int main(int argc, const char * argv[]) {
     // Our jid is present in every chat - should be most frequent one
     return [[counts keysSortedByValueUsingSelector:@selector(compare:)] lastObject];
 }
+- (NSNumber *)getJIDRowIDFromString:(NSString *)jidString {
+    if (!jidString || [jidString isKindOfClass:[NSNull class]]) return nil;
 
+    NSString *query = [NSString stringWithFormat:@"SELECT _id FROM jid WHERE raw_string = '%@' LIMIT 1;", jidString];
+    NSMutableArray *result = [self executeQuery:query];
+
+    if (result.count > 0 && [result.firstObject objectForKey:@"_id"]) {
+        return [result.firstObject objectForKey:@"_id"];
+    }
+
+    NSLog(@"Warning: Could not find row_id for JID string: %@", jidString);
+    NSLog(@"Warning getJIDRowIDFromString: Result: %@", result);
+    return nil;
+}
 - (void) importMessages {
     // ASSUMPTIONS:
     // - Main table is 'message'.
@@ -497,7 +511,12 @@ int main(int argc, const char * argv[]) {
         // This is inefficient if done per chat. Better to fetch all chat _ids initially.
         // Or pass chatRowID from importChats if available.
         NSNumber *androidChatRowID = nil;
-        NSString *chatIdQuery = [NSString stringWithFormat:@"SELECT _id FROM chat WHERE jid = '%@' LIMIT 1;", chatJID];
+        NSNumber *jidRowID = [self getJIDRowIDFromString:chatJID];
+        if (!jidRowID || [jidRowID isEqual:null]) {
+            NSLog(@"Could not find row_id for chatJID: %@. Skipping messages.", chatJID);
+            continue;
+        }
+        NSString *chatIdQuery = [NSString stringWithFormat:@"SELECT _id FROM chat WHERE jid_row_id = '%@' LIMIT 1;", jid_row_id];
         NSMutableArray *chatIdResult = [self executeQuery:chatIdQuery];
         if (chatIdResult.count > 0 && [chatIdResult.firstObject objectForKey:@"_id"]) {
             androidChatRowID = [chatIdResult.firstObject objectForKey:@"_id"];
