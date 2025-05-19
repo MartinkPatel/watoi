@@ -81,17 +81,7 @@ int main(int argc, const char * argv[]) {
 @end
 
 @implementation Importer
-- (NSString *)getJIDStringFromRowID:(NSNumber *)rowID {
-    if (!rowID || [rowID isEqual:[NSNull null]]) return nil;
-    NSString *query = [NSString stringWithFormat:@"SELECT raw_string FROM jid WHERE _id = %@ LIMIT 1;", rowID];
-    NSMutableArray *result = [self executeQuery:query]; // executeQuery needs to handle single value return
-    if (result.count > 0 && [result.firstObject objectForKey:@"raw_string"]) {
-        return [result.firstObject objectForKey:@"raw_string"];
-    }
-    NSLog(@"Warning: Could not find JID string for row_id: %@", rowID);
-    NSLog(@"Warning getJIDStringFromRowID: Result: %@", result);
-    return nil; // Or handle error appropriately
-}
+
 - (void) initializeCoreDataWithMomd:(NSString *)momdPath andDatabase:(NSString *)dbPath {
     NSFileManager *mgr = [NSFileManager defaultManager];
     BOOL isMomdADir = NO;
@@ -182,6 +172,18 @@ int main(int argc, const char * argv[]) {
                             @"me" : [msg valueForKey:@"fromJID"];
         NSLog(@"%@: %@", sender, [msg valueForKey:@"text"]);
     }
+}
+
+- (NSString *)getJIDStringFromRowID:(NSNumber *)rowID {
+    if (!rowID || [rowID isEqual:[NSNull null]]) return nil;
+    NSString *query = [NSString stringWithFormat:@"SELECT raw_string FROM jid WHERE _id = %@ LIMIT 1;", rowID];
+    NSMutableArray *result = [self executeQuery:query]; // executeQuery needs to handle single value return
+    if (result.count > 0 && [result.firstObject objectForKey:@"raw_string"]) {
+        return [result.firstObject objectForKey:@"raw_string"];
+    }
+    NSLog(@"Warning: Could not find JID string for row_id: %@", rowID);
+    NSLog(@"Warning getJIDStringFromRowID: Result: %@", result);
+    return nil; // Or handle error appropriately
 }
 
 - (NSMutableArray *) executeQuery:(NSString *)query {
