@@ -500,12 +500,17 @@ int main(int argc, const char * argv[]) {
     id null = [NSNull null];
     NSUInteger totalChats = self.chats.count;
     NSUInteger index = 0;
+    NSUInteger msgCount = 0;
     for (NSString *chatJID in self.chats) { @autoreleasepool {
         NSManagedObject *chat = [self.chats objectForKey:chatJID];
         NSDictionary *members = [self.chatMembers objectForKey:chatJID]; // From loadChats/importChats
         BOOL isGroup = ([chat valueForKey:@"groupInfo"] != nil);
         NSManagedObject *msg = nil;
         index++;
+        if (msgCount > 1000) {
+            NSLog(@"Breaking after 1000 messages");
+            break;
+        }
         NSLog(@"[%lu/%lu] Importing messages for chat: %@", (unsigned long)index, (unsigned long)totalChats, chatJID);
         NSLog(@"Importing messages for chat: %@", [chat valueForKey:@"contactJID"]);
 
@@ -537,18 +542,19 @@ int main(int argc, const char * argv[]) {
              "WHERE chat_row_id = %@ AND (message_type IS NULL OR message_type = %d) " // Filter out specific system messages
              "ORDER BY timestamp", androidChatRowID, MESSAGE_TYPE_TEXT];
 
-        NSUInteger totalMessages = results.count;
-        NSUInteger msgIndex = 0;
+        
 
         NSMutableArray *results = [self executeQuery:messagesQuery];
         int sort = 0; // This will be reset by the later fetch and update loop
-
+        NSUInteger totalMessages = results.count;
+        NSUInteger msgIndex = 0;
         for (NSDictionary *amsg in results) {
             msg = [NSEntityDescription insertNewObjectForEntityForName:@"WAMessage"
                                                 inManagedObjectContext:self.moc];
 
             NSDate *timestamp = [self convertAndroidTimestamp:[amsg objectForKey:@"timestamp"]];
             msgIndex++;
+            msgCount++;
             NSLog(@"[%lu/%lu] Importing message with Date: %@", (unsigned long)msgIndex, (unsigned long)totalMessages, timestamp);
             // Modern: 'from_me' is likely an integer 0/1
 
