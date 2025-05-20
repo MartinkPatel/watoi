@@ -507,7 +507,10 @@ int main(int argc, const char * argv[]) {
         BOOL isGroup = ([chat valueForKey:@"groupInfo"] != nil);
         NSManagedObject *msg = nil;
         index++;
-        
+        if (index > 300) {
+            NSLog(@"Breaking after 1000 messages");
+            break;
+        }
         NSLog(@"[%lu/%lu] Importing messages for chat: %@", (unsigned long)index, (unsigned long)totalChats, chatJID);
         NSLog(@"Importing messages for chat: %@", [chat valueForKey:@"contactJID"]);
 
@@ -546,10 +549,7 @@ int main(int argc, const char * argv[]) {
         NSUInteger totalMessages = results.count;
         NSUInteger msgIndex = 0;
         for (NSDictionary *amsg in results) {
-            if (index > 300) {
-            NSLog(@"Breaking after 1000 messages");
-            break;
-            }
+            
             msg = [NSEntityDescription insertNewObjectForEntityForName:@"WAMessage"
                                                 inManagedObjectContext:self.moc];
 
@@ -685,6 +685,10 @@ int main(int argc, const char * argv[]) {
 
         NSError *error = nil;
         NSArray *allMessagesForChat = [self.moc executeFetchRequest:fetchRequest error:&error];
+        if (error) {
+            NSLog(@"Error fetching messages for chat %@: %@\n%@", chatJID, [error localizedDescription], [error userInfo]);
+            continue; // Skip this chat if fetch fails
+        }
         if (!allMessagesForChat) {
             NSLog(@"Error fetching messages for sort update: %@\n%@", [error localizedDescription], [error userInfo]);
             // Continue without sorting if fetch fails, or abort
