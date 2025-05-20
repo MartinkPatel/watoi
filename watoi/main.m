@@ -507,9 +507,9 @@ int main(int argc, const char * argv[]) {
         BOOL isGroup = ([chat valueForKey:@"groupInfo"] != nil);
         NSManagedObject *msg = nil;
         index++;
-        if (msgCount > 1000) {
+        if (index > 300) {
             NSLog(@"Breaking after 1000 messages");
-            break;
+            continue;
         }
         NSLog(@"[%lu/%lu] Importing messages for chat: %@", (unsigned long)index, (unsigned long)totalChats, chatJID);
         NSLog(@"Importing messages for chat: %@", [chat valueForKey:@"contactJID"]);
