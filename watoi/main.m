@@ -498,13 +498,15 @@ int main(int argc, const char * argv[]) {
     //     "ORDER BY m.timestamp", chatRowIDFromAndroid, SOME_SYSTEM_MESSAGE_TYPE_CODE];
 
     id null = [NSNull null];
-
+    NSUInteger totalChats = self.chats.count;
+    NSUInteger index = 0;
     for (NSString *chatJID in self.chats) { @autoreleasepool {
         NSManagedObject *chat = [self.chats objectForKey:chatJID];
         NSDictionary *members = [self.chatMembers objectForKey:chatJID]; // From loadChats/importChats
         BOOL isGroup = ([chat valueForKey:@"groupInfo"] != nil);
         NSManagedObject *msg = nil;
-
+        index++;
+        NSLog(@"[%lu/%lu] Importing messages for chat: %@", (unsigned long)index, (unsigned long)totalChats, chatJID);
         NSLog(@"Importing messages for chat: %@", [chat valueForKey:@"contactJID"]);
 
         // To get chat_row_id for the current chatJID to query messages:
@@ -535,6 +537,9 @@ int main(int argc, const char * argv[]) {
              "WHERE chat_row_id = %@ AND (message_type IS NULL OR message_type = %d) " // Filter out specific system messages
              "ORDER BY timestamp", androidChatRowID, MESSAGE_TYPE_TEXT];
 
+        NSUInteger totalMessages = results.count;
+        NSUInteger msgIndex = 0;
+
         NSMutableArray *results = [self executeQuery:messagesQuery];
         int sort = 0; // This will be reset by the later fetch and update loop
 
@@ -542,10 +547,14 @@ int main(int argc, const char * argv[]) {
             msg = [NSEntityDescription insertNewObjectForEntityForName:@"WAMessage"
                                                 inManagedObjectContext:self.moc];
 
+            NSDate *timestamp = [self convertAndroidTimestamp:[amsg objectForKey:@"timestamp"]];
+            msgIndex++;
+            NSLog(@"[%lu/%lu] Importing message with Date: %@", (unsigned long)msgIndex, (unsigned long)totalMessages, timestamp);
             // Modern: 'from_me' is likely an integer 0/1
+
             BOOL fromMe = [[amsg objectForKey:@"from_me"] intValue] == 1;
 
-            NSDate *timestamp = [self convertAndroidTimestamp:[amsg objectForKey:@"timestamp"]];
+            // NSDate *timestamp = [self convertAndroidTimestamp:[amsg objectForKey:@"timestamp"]];
             [msg setValue:timestamp forKey:@"messageDate"];
             // TODO sentDate
 
