@@ -507,10 +507,7 @@ int main(int argc, const char * argv[]) {
         BOOL isGroup = ([chat valueForKey:@"groupInfo"] != nil);
         NSManagedObject *msg = nil;
         index++;
-        if (index > 300) {
-            NSLog(@"Breaking after 1000 messages");
-            continue;
-        }
+        
         NSLog(@"[%lu/%lu] Importing messages for chat: %@", (unsigned long)index, (unsigned long)totalChats, chatJID);
         NSLog(@"Importing messages for chat: %@", [chat valueForKey:@"contactJID"]);
 
@@ -549,6 +546,10 @@ int main(int argc, const char * argv[]) {
         NSUInteger totalMessages = results.count;
         NSUInteger msgIndex = 0;
         for (NSDictionary *amsg in results) {
+            if (index > 300) {
+            NSLog(@"Breaking after 1000 messages");
+            break;
+            }
             msg = [NSEntityDescription insertNewObjectForEntityForName:@"WAMessage"
                                                 inManagedObjectContext:self.moc];
 
@@ -714,6 +715,7 @@ int main(int argc, const char * argv[]) {
 
         [self saveCoreData];
     }}
+    NSLog(@"Imported %lu messages", (unsigned long)msgCount);
 }
 
 
