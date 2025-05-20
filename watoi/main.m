@@ -718,6 +718,7 @@ int main(int argc, const char * argv[]) {
 
 
 - (void) saveCoreData {
+    NSLog(@"Saving CoreData");
     NSError *error = nil;
     if ([self.moc save:&error] == NO) {
         NSAssert(NO, @"Error saving context: %@\n%@", [error localizedDescription], [error userInfo]);
