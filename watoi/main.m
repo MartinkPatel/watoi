@@ -528,12 +528,12 @@ int main(int argc, const char * argv[]) {
         // Define a placeholder for system message type to ignore (this needs to be researched from the actual DB)
         // For example, if type 10 is system messages you want to ignore:
         int SYSTEM_MESSAGE_TYPE_TO_IGNORE = 7; // THIS IS A PLACEHOLDER
-
+        int MESSAGE_TYPE_TEXT = 0; // Assuming 0 is the type for text messages
         NSString *messagesQuery = [NSString stringWithFormat:
             @"SELECT from_me, timestamp, key_id, message_type, text_data, sender_jid_row_id "
              "FROM message "
-             "WHERE chat_row_id = %@ AND (message_type IS NULL OR message_type != %d) " // Filter out specific system messages
-             "ORDER BY timestamp", androidChatRowID, SYSTEM_MESSAGE_TYPE_TO_IGNORE];
+             "WHERE chat_row_id = %@ AND (message_type IS NULL OR message_type = %d) " // Filter out specific system messages
+             "ORDER BY timestamp", androidChatRowID, MESSAGE_TYPE_TEXT];
 
         NSMutableArray *results = [self executeQuery:messagesQuery];
         int sort = 0; // This will be reset by the later fetch and update loop
